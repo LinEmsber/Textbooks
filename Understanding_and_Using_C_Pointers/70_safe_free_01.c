@@ -1,5 +1,7 @@
 /* A safe free function */
 
+#include <stdio.h>
+#include <stdlib.h>
 
 // Using this function will get a warning, if you do not explicitly cast
 // the pointer type to void.
@@ -22,7 +24,7 @@ int main()
 
 	printf("before: %p\n", pi);
 	safe_free(pi);
-	
+
 	printf("after: %p\n", pi);
 	safe_free(pi);
 
