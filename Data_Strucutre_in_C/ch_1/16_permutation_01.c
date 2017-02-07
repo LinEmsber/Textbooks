@@ -70,7 +70,7 @@ void perm_char( char *list, int start, int end)
 int main()
 {
 	int int_arr[] = { 1, 2, 3 };
-	char char_arr[] = "abcd";
+	char char_arr[] = "abc";
 
 	perm_int(int_arr, 0, 2);
 	printf("\n");
