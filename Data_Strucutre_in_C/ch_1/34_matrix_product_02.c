@@ -1,18 +1,16 @@
-/* martix production */
-
-// A rebrust method to create a matrix, and conduct the matrix production.
+/* martix production
+ * A rebrust method to create a matrix, and conduct the matrix production.
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
 
 typedef struct _matrix MATRIX;
-struct _matrix
-{
+struct _matrix {
 	int **matrix;
 	int row;
 	int column;
 };
-
 
 MATRIX *create_matrix( int rows, int columns )
 {
@@ -45,9 +43,7 @@ MATRIX *create_matrix( int rows, int columns )
 
 void print_matrix( MATRIX *m )
 {
-
 	int i, j;
-
 	printf("\nThe matrices are:\n");
 
 	for( i = 0; i < m -> row; i++ ) {
@@ -58,11 +54,8 @@ void print_matrix( MATRIX *m )
 	}
 }
 
-
-
 MATRIX *matrix_product( MATRIX *m1, MATRIX *m2 )
 {
-
 	int i, j, k;
 
 	// Allocate memory for MATRIX structure
@@ -76,7 +69,6 @@ MATRIX *matrix_product( MATRIX *m1, MATRIX *m2 )
 	}
 	result -> row = m1 -> row;
 	result -> column = m2 -> column;
-
 
 	// production
 	for( i = 0; i < m1 -> row; i++ )

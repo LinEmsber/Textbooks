@@ -39,13 +39,10 @@ int main()
 	printf("arr_2\n");
 	print_matrix(&arr_2[0][0], 5, 2);
 
-
 	for (i = 0; i < 2; i++)
 		for(j = 0; j < 2; j++)
 			for( k = 0; k < 5; k++)
 				arr_3[i][j] += arr_1[i][k] * arr_2[k][j];
-
-
 
 	printf("mult(arr_1, arr_2)\n");
 	print_matrix(&arr_3[0][0], 2, 2);
