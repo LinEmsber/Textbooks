@@ -1,3 +1,5 @@
+/* Storage allocator. */
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -6,55 +8,61 @@
 /* Minimum units to request. */
 #define NALLOC 1024
 
-
 /* For alignment to long boundary. */
 typedef long Align;
-
 typedef union header Header;
 
-/* Block header */
+/* Block header
+ * If this header is used as structure s, it stores the start pointer and the memory size.
+ * If this header is only used as the memory block, the alignment size is data type: long.
+ *
+ * In the past, the size of pointer is 4 byte, and the size of unsigned int is also 4 byte.
+ * Thus, the size of this union header is 8 byte.
+ * However, in the Ubuntu 16.04 amd_64, the size of pointer becomes as 8 bytes.
+ * The total size of union header consequently becomes 16 bytes.
+ */
 union header {
-	struct {
-		// size of this block
-		union header *ptr;
-		// size of this block
+	struct{
+		union header * ptr;
 		unsigned size;
-	} s;
-	// force alignment
+	}s;
 	Align x;
 };
 
 /* Function declaration. */
+Header * morecore(unsigned nu);
 void * knr_malloc(unsigned nbytes);
-void knr_free(void *ap);
+void knr_free(void * ap);
 
 /* The empty list to get started with. */
 static Header base;
 /* Start of free list. */
-static Header * freep = NULL;
+static Header * free_p = NULL;
 
 
 /* knr_malloc: general-purpose storage allocator. */
 void * knr_malloc(unsigned nbytes)
 {
-	Header * p, * prevp;
-	Header * morecore(unsigned);
+	Header * p, * prev_p;
 	unsigned nunits;
 
+	/* Align the nbytes as multiply of Header, and add 1 as the Header to store ptr and size. */
 	nunits = (nbytes + sizeof(Header) - 1) / sizeof(Header) + 1;
 
-	/* No free list yet, we initialize the list. */
-	if ((prevp = freep) == NULL) {
-		base.s.ptr = freep = prevp = &base;
+	/* No free list yet, we search the unused space from the base. */
+	prev_p = free_p;
+	if (prev_p == NULL) {
+		base.s.ptr = free_p = prev_p = &base;
 		base.s.size = 0;
 	}
 
-	for (p = prevp->s.ptr; ; prevp = p, p = p->s.ptr) {
+	/* Search from the free list or the base. p points to the first unused space. */
+	for (p = prev_p->s.ptr; ; prev_p = p, p = p->s.ptr) {
 
 		if (p->s.size >= nunits) {
 			/* Exactly. */
 			if (p->s.size == nunits){
-				prevp->s.ptr = p->s.ptr;
+				prev_p->s.ptr = p->s.ptr;
 			}
 			/* Allocate tail end. */
 			else {
@@ -62,14 +70,16 @@ void * knr_malloc(unsigned nbytes)
 				p += p->s.size;
 				p->s.size = nunits;
 			}
-			freep = prevp;
-			return (void *)(p+1);
+			free_p = prev_p;
+
+			/* Return p + 1 as the ptr which is the really used space. */
+			return (void *) (p + 1);
 		}
 
-		/* Wrapped around free list. */
-		if (p == freep){
-			/* None left. */
-			if ((p = morecore(nunits)) == NULL)
+		/* Wrapped around the free list. None left. */
+		if (p == free_p){
+			p = morecore(nunits);
+			if (p == NULL)
 				return NULL;
 		}
 	}
@@ -79,23 +89,25 @@ void * knr_malloc(unsigned nbytes)
 /* morecore: ask system for more memory. */
 Header * morecore(unsigned nu)
 {
-	char * cp;
-	Header * up;
+	char * current_p;
+	Header * unused_p;
 
 	if (nu < NALLOC)
 		nu = NALLOC;
 
-	cp = sbrk(nu * sizeof(Header));
+	current_p = sbrk(nu * sizeof(Header));
 
 	/* No space at all. */
-	if (cp == (char *) -1)
+	if (current_p == (char *) -1)
 		return NULL;
 
-	up = (Header *) cp;
-	up->s.size = nu;
-	knr_free((void *)(up + 1));
+	unused_p = (Header *) current_p;
+	unused_p->s.size = nu;
 
-	return freep;
+	/* The first block is used as header to record the ptr and the size. */
+	knr_free( (void *)(unused_p + 1) );
+
+	return free_p;
 }
 
 /* free: put block ap in free list. */
@@ -103,15 +115,15 @@ void knr_free(void * ap)
 {
 	Header * bp, * p;
 
-	/* Point to block header. */
+	/* Fom the ptr point back to block header. */
 	bp = (Header *)ap - 1;
-	for (p = freep; !(bp > p && bp < p->s.ptr); p = p->s.ptr){
+	for (p = free_p; !(bp > p && bp < p->s.ptr); p = p->s.ptr){
 		/* Freed block at start of end of arena. */
 		if (p >= p->s.ptr && (bp > p || bp < p->s.ptr))
 			break;
 	}
 
-	/* Join to upper. */
+	/* Join to upper nbr. */
 	if (bp + bp->s.size == p->s.ptr) {
 		bp->s.size += p->s.ptr->s.size;
 		bp->s.ptr = p->s.ptr->s.ptr;
@@ -120,6 +132,7 @@ void knr_free(void * ap)
 		bp->s.ptr = p->s.ptr;
 	}
 
+	/* Join to lower nbr. */
 	if (p + p->s.size == bp) {
 		p->s.size += bp->s.size;
 		p->s.ptr = bp->s.ptr;
@@ -128,7 +141,7 @@ void knr_free(void * ap)
 		p->s.ptr = bp;
 	}
 
-	freep = p;
+	free_p = p;
 }
 
 
