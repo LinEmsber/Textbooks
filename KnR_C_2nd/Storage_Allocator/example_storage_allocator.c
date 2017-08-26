@@ -1,7 +1,12 @@
-/* Storage allocator. */
+/* Storage allocator.
+ *
+ * References:
+ * https://stackoverflow.com/questions/13159564/explain-this-implementation-of-malloc-from-the-kr-book
+ */
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include <unistd.h>
 
@@ -10,138 +15,174 @@
 
 /* For alignment to long boundary. */
 typedef long Align;
-typedef union header Header;
+typedef union header header_t;
 
 /* Block header
  * If this header is used as structure s, it stores the start pointer and the memory size.
  * If this header is only used as the memory block, the alignment size is data type: long.
  *
- * In the past, the size of pointer is 4 byte, and the size of unsigned int is also 4 byte.
+ * In the past, the size of pointer is 4 byte, and the size of size_t is also 4 byte.
  * Thus, the size of this union header is 8 byte.
  * However, in the Ubuntu 16.04 amd_64, the size of pointer becomes as 8 bytes.
  * The total size of union header consequently becomes 16 bytes.
  */
 union header {
 	struct{
-		union header * ptr;
-		unsigned size;
+		union header * next;
+		size_t size;
 	}s;
 	Align x;
 };
 
 /* Function declaration. */
-Header * morecore(unsigned nu);
-void * knr_malloc(unsigned nbytes);
+header_t * morecore(size_t nu);
+void * knr_malloc(size_t n_bytes);
 void knr_free(void * ap);
 
 /* The empty list to get started with. */
-static Header base;
+static header_t base = {0};
 /* Start of free list. */
-static Header * free_p = NULL;
+static header_t * free_p = NULL;
 
 
 /* knr_malloc: general-purpose storage allocator. */
-void * knr_malloc(unsigned nbytes)
+void * knr_malloc(size_t n_bytes)
 {
-	Header * p, * prev_p;
-	unsigned nunits;
+	header_t * curr_p, * prev_p;
+	size_t n_units;
+	void * result;
+	bool is_allocating;
 
-	/* Align the nbytes as multiply of Header, and add 1 as the Header to store ptr and size. */
-	nunits = (nbytes + sizeof(Header) - 1) / sizeof(Header) + 1;
+	/* Align the n_bytes as multiply of header_t, and add 1 as the header_t to store next and size. */
+	n_units = (n_bytes + sizeof(header_t) - 1) / sizeof(header_t) + 1;
 
-	/* No free list yet, we search the unused space from the base. */
+	/* We search the unused space from the base. If there is no free list yet exists, we have to initialize it. */
 	prev_p = free_p;
 	if (prev_p == NULL) {
-		base.s.ptr = free_p = prev_p = &base;
+		base.s.next = &base;
+		free_p = &base;
+		prev_p = &base;
 		base.s.size = 0;
 	}
 
-	/* Search from the free list or the base. p points to the first unused space. */
-	for (p = prev_p->s.ptr; ; prev_p = p, p = p->s.ptr) {
+	/* Step through the free list looking for a block of memory large enough to fit nunits units of memory into.
+	 * If the whole list is traversed without finding such a block, then morecore is called to request more memory
+	 * from the OS.
+	 */
+	is_allocating = true;
+	for (curr_p = prev_p->s.next; is_allocating; prev_p = curr_p, curr_p = curr_p->s.next) {
 
-		if (p->s.size >= nunits) {
-			/* Exactly. */
-			if (p->s.size == nunits){
-				prev_p->s.ptr = p->s.ptr;
+		/* found a block of memory in free list large enough to fit nunits units of memory into. */
+		if (curr_p->s.size >= n_units) {
+			/* The block is exactly the right size; remove the block from the free list by pointing the
+			 * previous block to the next block.
+			 */
+			if (curr_p->s.size == n_units){
+				prev_p->s.next = curr_p->s.next;
 			}
-			/* Allocate tail end. */
+			/* The block is larger than the amount of memory asked for; allocate tail end of the block
+			 * to the user.
+			 */
 			else {
-				p->s.size -= nunits;
-				p += p->s.size;
-				p->s.size = nunits;
+				/* Changes the memory stored at curr_p to reflect the reduced block size. */
+				curr_p->s.size -= n_units;
+				/* Find location at which to create the block header for the new block. */
+				curr_p += curr_p->s.size;
+				/* Store the block size in the new header. */
+				curr_p->s.size = n_units;
 			}
+			/* Set global starting position to the previous pointer. Next call to malloc will start
+			 * either at the remaining part of the partitioned block, if a partition occurred.
+			 */
 			free_p = prev_p;
 
-			/* Return p + 1 as the ptr which is the really used space. */
-			return (void *) (p + 1);
+			/* Return curr_p + 1 as the next which is the really used space. */
+			result = curr_p + 1;
+			is_allocating = false;
 		}
 
 		/* Wrapped around the free list. None left. */
-		if (p == free_p){
-			p = morecore(nunits);
-			if (p == NULL)
-				return NULL;
+		if (curr_p == free_p){
+
+			/* The reason that we have to assign curr_p to it again, is that there is a call to free
+			 * inside of morecore that can potentially change the value of free_p.
+			 */
+			curr_p = morecore(n_units);
+			if (curr_p == NULL){
+				result = NULL;
+				is_allocating = false;
+			}
 		}
 	}
+
+	return (void *) result;
 }
 
 
 /* morecore: ask system for more memory. */
-Header * morecore(unsigned nu)
+header_t * morecore(size_t nu)
 {
 	char * current_p;
-	Header * unused_p;
+	header_t * unused_p;
 
 	if (nu < NALLOC)
 		nu = NALLOC;
 
-	current_p = sbrk(nu * sizeof(Header));
+	current_p = sbrk(nu * sizeof(header_t));
 
 	/* No space at all. */
 	if (current_p == (char *) -1)
 		return NULL;
 
-	unused_p = (Header *) current_p;
+	unused_p = (header_t *) current_p;
 	unused_p->s.size = nu;
 
-	/* The first block is used as header to record the ptr and the size. */
+	/* Insert block into the free list so that it is available for malloc. Note that we add 1 to the
+	 * address, effectively moving to the first position after the header data, since of course we
+	 * want the block header to be transparent for the user's interactions with malloc and free.
+	 */
 	knr_free( (void *)(unused_p + 1) );
 
+	/* Returns the start of the free list. Thus by returning this value the calling function can
+	 * immediately find the new memory by following the pointer to the next block.
+	 */
 	return free_p;
 }
 
 /* free: put block ap in free list. */
 void knr_free(void * ap)
 {
-	Header * bp, * p;
+	header_t * bp, * curr_p;
 
-	/* Fom the ptr point back to block header. */
-	bp = (Header *)ap - 1;
-	for (p = free_p; !(bp > p && bp < p->s.ptr); p = p->s.ptr){
+	/* Fom the next point back to block header. */
+	bp = (header_t *)ap - 1;
+
+	/* At the first, free_p is equal base. */
+	for (curr_p = free_p; !(bp > curr_p && bp < curr_p->s.next); curr_p = curr_p->s.next){
 		/* Freed block at start of end of arena. */
-		if (p >= p->s.ptr && (bp > p || bp < p->s.ptr))
+		if (curr_p >= curr_p->s.next && (bp > curr_p || bp < curr_p->s.next))
 			break;
 	}
 
 	/* Join to upper nbr. */
-	if (bp + bp->s.size == p->s.ptr) {
-		bp->s.size += p->s.ptr->s.size;
-		bp->s.ptr = p->s.ptr->s.ptr;
+	if (bp + bp->s.size == curr_p->s.next) {
+		bp->s.size += curr_p->s.next->s.size;
+		bp->s.next = curr_p->s.next->s.next;
 	}
 	else{
-		bp->s.ptr = p->s.ptr;
+		bp->s.next = curr_p->s.next;
 	}
 
 	/* Join to lower nbr. */
-	if (p + p->s.size == bp) {
-		p->s.size += bp->s.size;
-		p->s.ptr = bp->s.ptr;
+	if (curr_p + curr_p->s.size == bp) {
+		curr_p->s.size += bp->s.size;
+		curr_p->s.next = bp->s.next;
 	}
 	else{
-		p->s.ptr = bp;
+		curr_p->s.next = bp;
 	}
 
-	free_p = p;
+	free_p = curr_p;
 }
 
 
