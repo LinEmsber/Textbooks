@@ -157,12 +157,27 @@ void knr_free(void * ap)
 	/* Fom the next point back to block header. */
 	bp = (header_t *)ap - 1;
 
-	/* At the first, free_p is equal base. */
+	/* Step through the free list looking for the position in the list to insert block. We have
+	 * to check for the cases where either the insertion block is either to the left of every
+	 * other block owned by malloc (the case that is missed), or to the right of every block
+	 * owned by malloc (the case not checked for).  These last two cases are what is checked for
+	 * by the condition inside of the body of the loop.
+	 */
 	for (curr_p = free_p; !(bp > curr_p && bp < curr_p->s.next); curr_p = curr_p->s.next){
-		/* Freed block at start of end of arena. */
+
+		/* curr_p >= curr_p->s.ptr implies that the current block is the rightmost block in
+		 * the free list. Then if the insertion block is to the right of that block, then it
+		 * is the new rightmost block; conversely if it is to the left of the block that
+		 * curr_p points to (which is the current leftmost block), then the insertion block
+		 * is the new leftmost block.
+		 */
 		if (curr_p >= curr_p->s.next && (bp > curr_p || bp < curr_p->s.next))
 			break;
 	}
+
+	/* Having found the correct location in the free list to place the insertion block. We have to
+	 * (i) link it to the next block, and (ii) link the previous block to it.
+	 */
 
 	/* Join to upper nbr. */
 	if (bp + bp->s.size == curr_p->s.next) {
