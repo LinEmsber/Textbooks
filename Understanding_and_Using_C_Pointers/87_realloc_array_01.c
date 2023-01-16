@@ -28,7 +28,7 @@ char *get_line(void)
 			break;
 		}
 
-		if ( ++len >= len){
+		if ( ++len >= max_len){
 
 			// resize the array
 			char *new_buf = realloc(buf, max_len + size_increment);
